@@ -403,12 +403,21 @@
         <div class="an-card-body p-0">
           <div class="table-responsive">
             <table class="table table-sm table-hover mb-0" style="font-size:.84rem">
-              <thead class="table-light">
-                <tr><th>#</th><th>Equipo</th><th class="text-center">OTs</th><th class="text-center">Pendientes</th><th class="text-center">En Progreso</th><th class="text-center">Completadas</th><th class="text-end">Costo repuestos</th><th class="text-end">Costo HH</th></tr>
-              </thead>
+              <thead class="table-light" id="an-ranking-thead"></thead>
               <tbody id="an-tabla-equipos"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div class="an-card mt-3">
+        <div class="an-card-head"><i class="bi bi-search me-1"></i>Buscar equipo — costo acumulado</div>
+        <div class="an-card-body">
+          <input class="form-control form-control-sm mb-2" style="max-width:400px"
+                 placeholder="Escribe número interno o descripción (ej: 2021, Grúa…)"
+                 id="an-busq-input" oninput="renderBuscador()">
+          <div id="an-busq-matches"></div>
+          <div id="an-busq-resultado"></div>
         </div>
       </div>
     </div>
@@ -1634,6 +1643,114 @@ function anFiltrar(lista){
   const d=new Date();d.setMonth(d.getMonth()-m);
   return lista.filter(o=>o.fecha&&new Date(o.fecha)>=d);
 }
+let anRankSort = { col: 'total', dir: 'desc' };
+let anBuscadoKey = null;
+let eqModalKey   = null;
+
+function kpiMiniHtml(label, val, col, highlight=false) {
+  return `<div style="background:${highlight?col:'#f8fafc'};border-radius:8px;padding:12px 14px;border-left:4px solid ${col}">
+    <div style="font-size:.72rem;color:${highlight?'rgba(255,255,255,.8)':'#6b7280'};margin-bottom:4px">${label}</div>
+    <div style="font-weight:700;color:${highlight?'#fff':col};font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHtml(String(val))}">${val}</div>
+  </div>`;
+}
+
+function anSortRanking(col) {
+  if(anRankSort.col===col) anRankSort.dir=anRankSort.dir==='desc'?'asc':'desc';
+  else anRankSort={col,dir:'desc'};
+  renderAnalytics();
+}
+
+function openEqModalByKey(key) {
+  const s=(window._anEqStats||{})[key];
+  eqModalKey=key; eqModalNombre=s?s.label:key; eqModalEqId=null;
+  renderEqModal();
+  document.getElementById('eq-modal').style.display='flex';
+}
+
+function anSelEq(key) {
+  anBuscadoKey=key;
+  document.getElementById('an-busq-matches').innerHTML='';
+  renderBuscador();
+}
+
+function anClearBusq() {
+  anBuscadoKey=null;
+  const inp=document.getElementById('an-busq-input');
+  if(inp) inp.value='';
+  document.getElementById('an-busq-matches').innerHTML='';
+  document.getElementById('an-busq-resultado').innerHTML='';
+}
+
+function renderBuscador() {
+  const q=(document.getElementById('an-busq-input')?.value||'').toLowerCase().trim();
+  const matchesEl=document.getElementById('an-busq-matches');
+  const resEl=document.getElementById('an-busq-resultado');
+  if(!matchesEl||!resEl) return;
+  if(!q&&!anBuscadoKey){matchesEl.innerHTML='';resEl.innerHTML='';return;}
+  if(anBuscadoKey) {
+    matchesEl.innerHTML='';
+    const data=anFiltrar(ots);
+    const ekFn=o=>o.equipo_id||`_${o.equipo_desc||'—'}`;
+    const eqOTs=data.filter(o=>ekFn(o)===anBuscadoKey);
+    const label=(window._anEqStats?.[anBuscadoKey]?.label)||anBuscadoKey;
+    if(!eqOTs.length){resEl.innerHTML='<p class="text-muted small">Sin OTs en el período.</p>';return;}
+    const costoRep=eqOTs.reduce((s,o)=>s+(o.repuestos||[]).reduce((sr,r)=>sr+(r.cantidad||0)*(r.precio||0),0),0);
+    const costoHH=eqOTs.reduce((s,o)=>s+(o.horas_hombre||[]).reduce((sh,h)=>sh+(h.horas||0)*(h.tarifa||0),0),0);
+    const totalHoras=eqOTs.reduce((s,o)=>s+(o.horas_hombre||[]).reduce((sh,h)=>sh+(h.horas||0),0),0);
+    const repMap={};
+    eqOTs.forEach(o=>(o.repuestos||[]).forEach(r=>{const k=r.nombre||'—';if(!repMap[k])repMap[k]={cantidad:0,costo:0};repMap[k].cantidad+=(r.cantidad||0);repMap[k].costo+=(r.cantidad||0)*(r.precio||0);}));
+    const repArr=Object.entries(repMap).sort((a,b)=>b[1].costo-a[1].costo);
+    const hhMap={};
+    eqOTs.forEach(o=>(o.horas_hombre||[]).forEach(h=>{const k=h.tecnico||'Sin nombre';if(!hhMap[k])hhMap[k]={horas:0,costo:0};hhMap[k].horas+=(h.horas||0);hhMap[k].costo+=(h.horas||0)*(h.tarifa||0);}));
+    const hhArr=Object.entries(hhMap).sort((a,b)=>b[1].horas-a[1].horas);
+    resEl.innerHTML=`
+      <div style="background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;padding:16px 20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h6 style="margin:0;font-weight:700;color:#111827"><i class="bi bi-tools me-2 text-primary"></i>${escHtml(label)}<span class="text-muted fw-normal ms-2" style="font-size:.82rem">${eqOTs.length} OTs</span></h6>
+          <button class="btn-close btn-sm" onclick="anClearBusq()"></button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px">
+          ${kpiMiniHtml('Costo repuestos',formatMoney(costoRep),'#ef4444')}
+          ${kpiMiniHtml('Costo MO',formatMoney(costoHH),'#7c3aed')}
+          ${kpiMiniHtml('Horas HH',totalHoras+' h','#8b5cf6')}
+          ${kpiMiniHtml('Costo total',formatMoney(costoRep+costoHH),'#111827',true)}
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div style="font-weight:600;font-size:.83rem;color:#374151;margin-bottom:6px"><i class="bi bi-box-seam text-info me-1"></i>Repuestos utilizados</div>
+            ${repArr.length?`<div class="table-responsive"><table class="table table-sm table-hover mb-0" style="font-size:.82rem">
+              <thead class="table-light"><tr><th>Repuesto</th><th class="text-center">Cant.</th><th class="text-end">Costo</th></tr></thead>
+              <tbody>${repArr.map(([n,v])=>`<tr><td>${escHtml(n)}</td><td class="text-center">${v.cantidad}</td><td class="text-end">${formatMoney(v.costo)}</td></tr>`).join('')}</tbody>
+              <tfoot><tr style="border-top:2px solid #e2e8f0"><td colspan="2" class="fw-bold text-end text-danger small">Total</td><td class="text-end fw-bold text-danger">${formatMoney(costoRep)}</td></tr></tfoot>
+            </table></div>`:'<p class="text-muted small">Sin repuestos.</p>'}
+          </div>
+          <div class="col-md-6">
+            <div style="font-weight:600;font-size:.83rem;color:#374151;margin-bottom:6px"><i class="bi bi-person-clock me-1" style="color:#7c3aed"></i>Mano de obra</div>
+            ${hhArr.length?`<div class="table-responsive"><table class="table table-sm table-hover mb-0" style="font-size:.82rem">
+              <thead class="table-light"><tr><th>Técnico</th><th class="text-center">Horas</th><th class="text-end">Costo</th></tr></thead>
+              <tbody>${hhArr.map(([t,v])=>`<tr><td>${escHtml(t)}</td><td class="text-center" style="color:#7c3aed;font-weight:600">${v.horas} h</td><td class="text-end">${formatMoney(v.costo)}</td></tr>`).join('')}</tbody>
+              <tfoot><tr style="border-top:2px solid #e2e8f0"><td colspan="2" class="fw-bold text-end small" style="color:#7c3aed">Total</td><td class="text-end fw-bold" style="color:#7c3aed">${formatMoney(costoHH)}</td></tr></tfoot>
+            </table></div>`:'<p class="text-muted small">Sin horas.</p>'}
+          </div>
+        </div>
+        <div style="margin-top:14px;background:#111827;border-radius:8px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <div style="font-size:.7rem;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.05em">Costo total acumulado</div>
+            <div style="font-size:.78rem;color:rgba(255,255,255,.5);margin-top:2px">Rep. ${formatMoney(costoRep)} + MO ${formatMoney(costoHH)}</div>
+          </div>
+          <div style="font-size:1.5rem;font-weight:800;color:#fff">${formatMoney(costoRep+costoHH)}</div>
+        </div>
+      </div>`;
+    return;
+  }
+  const stats=window._anEqStats||{};
+  const matches=Object.entries(stats).filter(([,s])=>s.label.toLowerCase().includes(q)).slice(0,10);
+  matchesEl.innerHTML=matches.length
+    ?'<div class="d-flex flex-wrap gap-2 mb-3">'+matches.map(([k,s])=>`<button class="btn btn-sm btn-outline-primary" onclick="anSelEq('${escHtml(k)}')">${escHtml(s.label)} <span class="badge bg-primary ms-1">${s.total} OT${s.total!==1?'s':''}</span></button>`).join('')+'</div>'
+    :'<p class="text-muted small">Sin coincidencias.</p>';
+  resEl.innerHTML='';
+}
+
 function renderAnalytics() {
   const data=anFiltrar(ots);
   const total=data.length, comp=data.filter(o=>o.estado==='completado').length;
@@ -1717,27 +1834,69 @@ function renderAnalytics() {
 
   const eqStats={};
   data.forEach(o=>{
-    const k=o.equipo_desc||'—';
-    if(!eqStats[k])eqStats[k]={total:0,pendiente:0,en_progreso:0,completado:0,costo:0,costoHH:0};
+    const k=o.equipo_id||`_${o.equipo_desc||'—'}`;
+    const lbl=[o.equipo_interno,o.equipo_desc].filter(Boolean).join(' — ')||'—';
+    if(!eqStats[k])eqStats[k]={label:lbl,total:0,pendiente:0,en_progreso:0,completado:0,costo:0,costoHH:0,horas:0};
     eqStats[k].total++;
     eqStats[k][o.estado]=(eqStats[k][o.estado]||0)+1;
-    eqStats[k].costo+=(o.repuestos||[]).reduce((s,r)=>s+r.cantidad*r.precio,0);
-    eqStats[k].costoHH+=(o.horas_hombre||[]).reduce((s,h)=>s+h.horas*h.tarifa,0);
+    eqStats[k].costo+=(o.repuestos||[]).reduce((s,r)=>s+(r.cantidad||0)*(r.precio||0),0);
+    eqStats[k].costoHH+=(o.horas_hombre||[]).reduce((s,h)=>s+(h.horas||0)*(h.tarifa||0),0);
+    eqStats[k].horas+=(o.horas_hombre||[]).reduce((s,h)=>s+(h.horas||0),0);
   });
-  const _rankingEntries=Object.entries(eqStats).sort((a,b)=>b[1].total-a[1].total);
-  window._rankingEqNames=_rankingEntries.map(([n])=>n);
-  const ranking=_rankingEntries
-    .map(([n,s],i)=>`<tr>
-      <td>${i+1}</td>
-      <td><strong style="cursor:pointer;color:#3b82f6;text-decoration:underline dotted" onclick="openEqModal(window._rankingEqNames[${i}])">${escHtml(n)}</strong></td>
+  window._anEqStats=eqStats;
+
+  const sortFn=(a,b)=>{
+    const {col,dir}=anRankSort;
+    if(col==='label') return dir==='asc'?a[1].label.localeCompare(b[1].label):b[1].label.localeCompare(a[1].label);
+    const va=col==='costoTotal'?a[1].costo+a[1].costoHH:(a[1][col]||0);
+    const vb=col==='costoTotal'?b[1].costo+b[1].costoHH:(b[1][col]||0);
+    return dir==='asc'?va-vb:vb-va;
+  };
+  const entries=Object.entries(eqStats).sort(sortFn);
+  window._anEqKeys=entries.map(([k])=>k);
+
+  const sIcon=col=>{
+    if(anRankSort.col!==col) return`<i class="bi bi-arrow-down-up ms-1" style="font-size:.63rem;opacity:.25"></i>`;
+    return`<i class="bi ${anRankSort.dir==='asc'?'bi-sort-up':'bi-sort-down'} ms-1" style="font-size:.63rem;color:#3b82f6"></i>`;
+  };
+  const thS='cursor:pointer;user-select:none;white-space:nowrap';
+  document.getElementById('an-ranking-thead').innerHTML=`<tr>
+    <th style="width:32px">#</th>
+    <th style="${thS}" onclick="anSortRanking('label')">Equipo${sIcon('label')}</th>
+    <th class="text-center" style="${thS}" onclick="anSortRanking('total')">OTs${sIcon('total')}</th>
+    <th class="text-end" style="${thS};font-weight:700;background:#f8fafc" onclick="anSortRanking('costoTotal')">Costo total${sIcon('costoTotal')}</th>
+    <th class="text-end" style="${thS}" onclick="anSortRanking('costo')">Costo rep.${sIcon('costo')}</th>
+    <th class="text-end" style="${thS}" onclick="anSortRanking('costoHH')">Costo HH${sIcon('costoHH')}</th>
+    <th class="text-center" style="${thS}" onclick="anSortRanking('horas')">Horas HH${sIcon('horas')}</th>
+    <th class="text-center" style="min-width:110px">% Completado</th>
+    <th class="text-center" style="${thS}" onclick="anSortRanking('pendiente')">Pend.${sIcon('pendiente')}</th>
+    <th class="text-center" style="${thS}" onclick="anSortRanking('en_progreso')">En Prog.${sIcon('en_progreso')}</th>
+    <th class="text-center" style="${thS}" onclick="anSortRanking('completado')">Comp.${sIcon('completado')}</th>
+  </tr>`;
+
+  const ranking=entries.map(([k,s],i)=>{
+    const pct=s.total?Math.round(s.completado/s.total*100):0;
+    const costoTotal=s.costo+s.costoHH;
+    const barColor=pct>=80?'#10b981':pct>=50?'#f59e0b':'#ef4444';
+    return`<tr>
+      <td class="text-muted">${i+1}</td>
+      <td><strong style="cursor:pointer;color:#3b82f6;text-decoration:underline dotted" onclick="openEqModalByKey(window._anEqKeys[${i}])">${escHtml(s.label)}</strong></td>
       <td class="text-center fw-bold">${s.total}</td>
+      <td class="text-end fw-bold" style="background:#f8fafc;color:${costoTotal>0?'#111827':'#9ca3af'}">${costoTotal>0?formatMoney(costoTotal):'—'}</td>
+      <td class="text-end">${s.costo>0?formatMoney(s.costo):'<span style="color:#9ca3af">—</span>'}</td>
+      <td class="text-end">${s.costoHH>0?formatMoney(s.costoHH):'<span style="color:#9ca3af">—</span>'}</td>
+      <td class="text-center">${s.horas>0?`<span style="color:#7c3aed">${s.horas} h</span>`:'<span style="color:#9ca3af">—</span>'}</td>
+      <td><div style="display:flex;align-items:center;gap:5px">
+        <div style="flex:1;background:#e5e7eb;border-radius:3px;height:7px"><div style="width:${pct}%;background:${barColor};border-radius:3px;height:7px"></div></div>
+        <span style="font-size:.75rem;min-width:30px;text-align:right;color:#374151">${pct}%</span>
+      </div></td>
       <td class="text-center"><span class="pill pill-pendiente">${s.pendiente||0}</span></td>
       <td class="text-center"><span class="pill pill-en_progreso">${s.en_progreso||0}</span></td>
       <td class="text-center"><span class="pill pill-completado">${s.completado||0}</span></td>
-      <td class="text-end">${s.costo>0?formatMoney(s.costo):'<span style="color:#9ca3af">—</span>'}</td>
-      <td class="text-end">${s.costoHH>0?`<span style="color:#7c3aed">${formatMoney(s.costoHH)}</span>`:'<span style="color:#9ca3af">—</span>'}</td>
-    </tr>`).join('');
-  document.getElementById('an-tabla-equipos').innerHTML=ranking||'<tr><td colspan="8" class="text-center text-muted py-3">Sin datos.</td></tr>';
+    </tr>`;
+  }).join('');
+  document.getElementById('an-tabla-equipos').innerHTML=ranking||'<tr><td colspan="11" class="text-center text-muted py-3">Sin datos.</td></tr>';
+  renderBuscador();
 }
 
 // ═══════════════════ BACKUP / RESTORE ═════════════════════════════════════════
@@ -1873,6 +2032,7 @@ function openEqDashboard(eqId) {
 function closeEqModal() {
   eqModalNombre = null;
   eqModalEqId   = null;
+  eqModalKey    = null;
   const modal = document.getElementById('eq-modal');
   if(modal) modal.style.display = 'none';
 }
@@ -1881,24 +2041,28 @@ function renderEqModal() {
   const body = document.getElementById('eq-modal-body'); if(!body) return;
   // Si viene de Analytics usa el filtro de período; si viene de Equipos usa todos
   const pool = eqModalEqId ? ots : anFiltrar(ots);
+  const ekFn = o => o.equipo_id || `_${o.equipo_desc||'—'}`;
   const eqOTs = eqModalEqId
     ? pool.filter(o => o.equipo_id === eqModalEqId)
-    : pool.filter(o => (o.equipo_desc || '—') === eqModalNombre);
+    : eqModalKey
+      ? pool.filter(o => ekFn(o) === eqModalKey)
+      : pool.filter(o => (o.equipo_desc || '—') === eqModalNombre);
   const total = eqOTs.length;
   const comp  = eqOTs.filter(o => o.estado === 'completado').length;
   const pend  = eqOTs.filter(o => o.estado === 'pendiente').length;
   const prog  = eqOTs.filter(o => o.estado === 'en_progreso').length;
-  const costoRep = eqOTs.reduce((s,o) => s + (o.repuestos||[]).reduce((sr,r) => sr + r.cantidad*r.precio, 0), 0);
-  const costoHH  = eqOTs.reduce((s,o) => s + (o.horas_hombre||[]).reduce((sh,h) => sh + h.horas*h.tarifa, 0), 0);
+  const costoRep = eqOTs.reduce((s,o) => s + (o.repuestos||[]).reduce((sr,r) => sr + (r.cantidad||0)*(r.precio||0), 0), 0);
+  const costoHH  = eqOTs.reduce((s,o) => s + (o.horas_hombre||[]).reduce((sh,h) => sh + (h.horas||0)*(h.tarifa||0), 0), 0);
   const tiempos  = eqOTs.filter(o => o.estado==='completado' && o.fecha && o.fecha_cierre)
     .map(o => (new Date(o.fecha_cierre) - new Date(o.fecha)) / 86400000).filter(d => d >= 0);
   const promDias = tiempos.length ? (tiempos.reduce((s,d) => s+d, 0) / tiempos.length).toFixed(1) : null;
 
-  const kpiMini = (label, val, col) =>
-    `<div class="kpi-mini" style="border-color:${col}">
-       <div class="km-label">${label}</div>
-       <div class="km-val" style="color:${col}">${val}</div>
-     </div>`;
+  const repMap={};
+  eqOTs.forEach(o=>(o.repuestos||[]).forEach(r=>{const k=r.nombre||'—';if(!repMap[k])repMap[k]={cantidad:0,costo:0};repMap[k].cantidad+=(r.cantidad||0);repMap[k].costo+=(r.cantidad||0)*(r.precio||0);}));
+  const repArr=Object.entries(repMap).sort((a,b)=>b[1].costo-a[1].costo);
+  const hhMap={};
+  eqOTs.forEach(o=>(o.horas_hombre||[]).forEach(h=>{const k=h.tecnico||'Sin nombre';if(!hhMap[k])hhMap[k]={horas:0,costo:0};hhMap[k].horas+=(h.horas||0);hhMap[k].costo+=(h.horas||0)*(h.tarifa||0);}));
+  const hhArr=Object.entries(hhMap).sort((a,b)=>b[1].horas-a[1].horas);
 
   const histHTML = eqOTs.length
     ? `<table class="table table-sm table-hover mb-0" style="font-size:.83rem">
@@ -1906,9 +2070,9 @@ function renderEqModal() {
           <tr><th>N° OT</th><th>Fecha</th><th>Estado</th><th>Prioridad</th><th>Ejecutor</th><th class="text-end">Costo rep.</th><th class="text-end">Costo HH</th></tr>
         </thead>
         <tbody>
-          ${eqOTs.sort((a,b)=>b.numero.localeCompare(a.numero)).map(o=>{
-            const cr=(o.repuestos||[]).reduce((s,r)=>s+r.cantidad*r.precio,0);
-            const ch=(o.horas_hombre||[]).reduce((s,h)=>s+h.horas*h.tarifa,0);
+          ${eqOTs.slice().sort((a,b)=>b.numero.localeCompare(a.numero)).map(o=>{
+            const cr=(o.repuestos||[]).reduce((s,r)=>s+(r.cantidad||0)*(r.precio||0),0);
+            const ch=(o.horas_hombre||[]).reduce((s,h)=>s+(h.horas||0)*(h.tarifa||0),0);
             return`<tr>
               <td><strong>${escHtml(o.numero)}</strong></td>
               <td>${formatDate(o.fecha)}</td>
@@ -1930,20 +2094,44 @@ function renderEqModal() {
       </div>
       <button class="btn-close" onclick="closeEqModal()"></button>
     </div>
-    <div style="padding:16px 24px 0;display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-      ${kpiMini('Total OTs', total, '#6366f1')}
-      ${kpiMini('Costo repuestos', formatMoney(costoRep), '#ef4444')}
-      ${kpiMini('Costo HH', formatMoney(costoHH), '#7c3aed')}
-      ${kpiMini('Prom. resolución', promDias !== null ? promDias + ' días' : '—', '#8b5cf6')}
+    <div style="padding:16px 24px 8px;display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+      ${kpiMiniHtml('Total OTs', total, '#6366f1')}
+      ${kpiMiniHtml('Costo repuestos', formatMoney(costoRep), '#ef4444')}
+      ${kpiMiniHtml('Costo HH', formatMoney(costoHH), '#7c3aed')}
+      ${kpiMiniHtml('Prom. resolución', promDias !== null ? promDias + ' días' : '—', '#8b5cf6')}
+      ${kpiMiniHtml('Costo total', formatMoney(costoRep+costoHH), '#111827', true)}
     </div>
     <div style="padding:12px 24px;display:flex;gap:8px;flex-wrap:wrap">
       <span class="pill pill-pendiente">${pend} pendiente${pend!==1?'s':''}</span>
       <span class="pill pill-en_progreso">${prog} en progreso</span>
       <span class="pill pill-completado">${comp} completada${comp!==1?'s':''}</span>
     </div>
-    <div style="padding:0 24px 24px">
+    <div style="padding:0 24px 16px">
       <div style="font-weight:600;font-size:.84rem;color:#374151;margin-bottom:8px">Historial de OTs</div>
       <div class="table-responsive">${histHTML}</div>
+    </div>
+    <div style="padding:0 24px 16px">
+      <div style="font-weight:600;font-size:.84rem;color:#374151;margin-bottom:8px"><i class="bi bi-box-seam text-info me-1"></i>Repuestos utilizados</div>
+      ${repArr.length?`<div class="table-responsive"><table class="table table-sm table-hover mb-0" style="font-size:.83rem">
+        <thead class="table-light"><tr><th>Repuesto</th><th class="text-center">Cantidad total</th><th class="text-end">Costo acumulado</th></tr></thead>
+        <tbody>${repArr.map(([n,v])=>`<tr><td>${escHtml(n)}</td><td class="text-center">${v.cantidad}</td><td class="text-end">${formatMoney(v.costo)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr style="border-top:2px solid #e2e8f0;background:#fef2f2"><td colspan="2" class="fw-bold text-end text-danger">Total repuestos</td><td class="text-end fw-bold text-danger">${formatMoney(costoRep)}</td></tr></tfoot>
+      </table></div>`:'<p class="text-muted small mb-0">Sin repuestos registrados.</p>'}
+    </div>
+    <div style="padding:0 24px 16px">
+      <div style="font-weight:600;font-size:.84rem;color:#374151;margin-bottom:8px"><i class="bi bi-person-clock me-1" style="color:#7c3aed"></i>Mano de obra</div>
+      ${hhArr.length?`<div class="table-responsive"><table class="table table-sm table-hover mb-0" style="font-size:.83rem">
+        <thead class="table-light"><tr><th>Técnico</th><th class="text-center">Horas totales</th><th class="text-end">Costo acumulado</th></tr></thead>
+        <tbody>${hhArr.map(([t,v])=>`<tr><td>${escHtml(t)}</td><td class="text-center" style="color:#7c3aed;font-weight:600">${v.horas} h</td><td class="text-end">${formatMoney(v.costo)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr style="border-top:2px solid #e2e8f0;background:#faf5ff"><td colspan="2" class="fw-bold text-end" style="color:#7c3aed">Total mano de obra</td><td class="text-end fw-bold" style="color:#7c3aed">${formatMoney(costoHH)}</td></tr></tfoot>
+      </table></div>`:'<p class="text-muted small mb-0">Sin horas hombre registradas.</p>'}
+    </div>
+    <div style="margin:0 24px 24px;background:#111827;border-radius:10px;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:.72rem;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.05em">Costo total acumulado</div>
+        <div style="font-size:.8rem;color:rgba(255,255,255,.5);margin-top:2px">Repuestos ${formatMoney(costoRep)} + MO ${formatMoney(costoHH)}</div>
+      </div>
+      <div style="font-size:1.4rem;font-weight:800;color:#fff">${formatMoney(costoRep+costoHH)}</div>
     </div>`;
 }
 
